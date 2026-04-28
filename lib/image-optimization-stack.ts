@@ -243,6 +243,35 @@ export class ImageOptimizationStack extends Stack {
       });
       imageDeliveryCacheBehaviorConfig.responseHeadersPolicy = imageResponseHeadersPolicy;
     }
+    // Video delivery: passthrough from S3 with caching + CORS, no Lambda/Sharp processing
+    var videoDeliveryCacheBehaviorConfig: any = {
+      origin: new origins.S3Origin(originalImageBucket, {
+        originShieldRegion: CLOUDFRONT_ORIGIN_SHIELD_REGION,
+      }),
+      viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+      compress: false,
+      cachePolicy: new cloudfront.CachePolicy(this, `VideoCachePolicy${this.node.addr}`, {
+        defaultTtl: Duration.days(30),
+        maxTtl: Duration.days(365),
+        minTtl: Duration.seconds(0),
+      }),
+    };
+
+    if (CLOUDFRONT_CORS_ENABLED === 'true') {
+      const videoResponseHeadersPolicy = new cloudfront.ResponseHeadersPolicy(this, `VideoResponsePolicy${this.node.addr}`, {
+        responseHeadersPolicyName: `VideoResponsePolicy${this.node.addr}`,
+        corsBehavior: {
+          accessControlAllowCredentials: false,
+          accessControlAllowHeaders: ['*'],
+          accessControlAllowMethods: ['GET'],
+          accessControlAllowOrigins: ['*'],
+          accessControlMaxAge: Duration.seconds(600),
+          originOverride: false,
+        },
+      });
+      videoDeliveryCacheBehaviorConfig.responseHeadersPolicy = videoResponseHeadersPolicy;
+    }
+
     const imageDelivery = new cloudfront.Distribution(this, 'imageDeliveryDistribution', {
       comment: 'image optimization - image delivery',
       defaultBehavior: {
@@ -252,7 +281,8 @@ export class ImageOptimizationStack extends Stack {
         '*.jpg': imageDeliveryCacheBehaviorConfig,
         '*.jpeg': imageDeliveryCacheBehaviorConfig,
         '*.png': imageDeliveryCacheBehaviorConfig,
-        '*.gif': imageDeliveryCacheBehaviorConfig
+        '*.gif': imageDeliveryCacheBehaviorConfig,
+        '*.mp4': videoDeliveryCacheBehaviorConfig,
       },
     });
 
