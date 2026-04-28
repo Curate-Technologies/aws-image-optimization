@@ -28,15 +28,6 @@ var LAMBDA_TIMEOUT = '60';
 // Whether to deploy a sample website referenced in https://aws.amazon.com/blogs/networking-and-content-delivery/image-optimization-using-amazon-cloudfront-and-aws-lambda/
 var DEPLOY_SAMPLE_WEBSITE = 'false';
 
-type ImageDeliveryCacheBehaviorConfig = {
-  origin: any;
-  compress: any;
-  viewerProtocolPolicy: any;
-  cachePolicy: any;
-  functionAssociations: any;
-  responseHeadersPolicy?: any;
-};
-
 type LambdaEnv = {
   originalImageBucketName: string,
   transformedImageBucketName?: any;
@@ -206,7 +197,42 @@ export class ImageOptimizationStack extends Stack {
       functionName: `urlRewriteFunction${this.node.addr}`,
     });
 
-    var imageDeliveryCacheBehaviorConfig: ImageDeliveryCacheBehaviorConfig = {
+    let imageResponseHeadersPolicy: cloudfront.ResponseHeadersPolicy | undefined;
+    let videoResponseHeadersPolicy: cloudfront.ResponseHeadersPolicy | undefined;
+
+    if (CLOUDFRONT_CORS_ENABLED === 'true') {
+      imageResponseHeadersPolicy = new cloudfront.ResponseHeadersPolicy(this, `ResponseHeadersPolicy${this.node.addr}`, {
+        responseHeadersPolicyName: `ImageResponsePolicy${this.node.addr}`,
+        corsBehavior: {
+          accessControlAllowCredentials: false,
+          accessControlAllowHeaders: ['*'],
+          accessControlAllowMethods: ['GET'],
+          accessControlAllowOrigins: ['*'],
+          accessControlMaxAge: Duration.seconds(600),
+          originOverride: false,
+        },
+        customHeadersBehavior: {
+          customHeaders: [
+            { header: 'x-aws-image-optimization', value: 'v1.0', override: true },
+            { header: 'vary', value: 'accept', override: true },
+          ],
+        }
+      });
+
+      videoResponseHeadersPolicy = new cloudfront.ResponseHeadersPolicy(this, `VideoResponsePolicy${this.node.addr}`, {
+        responseHeadersPolicyName: `VideoResponsePolicy${this.node.addr}`,
+        corsBehavior: {
+          accessControlAllowCredentials: false,
+          accessControlAllowHeaders: ['*'],
+          accessControlAllowMethods: ['GET'],
+          accessControlAllowOrigins: ['*'],
+          accessControlMaxAge: Duration.seconds(600),
+          originOverride: false,
+        },
+      });
+    }
+
+    const imageDeliveryCacheBehaviorConfig: cloudfront.BehaviorOptions = {
       origin: imageOrigin,
       viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
       compress: false,
@@ -219,32 +245,11 @@ export class ImageOptimizationStack extends Stack {
         eventType: cloudfront.FunctionEventType.VIEWER_REQUEST,
         function: urlRewriteFunction,
       }],
-    }
+      responseHeadersPolicy: imageResponseHeadersPolicy,
+    };
 
-    if (CLOUDFRONT_CORS_ENABLED === 'true') {
-      // Creating a custom response headers policy. CORS allowed for all origins.
-      const imageResponseHeadersPolicy = new cloudfront.ResponseHeadersPolicy(this, `ResponseHeadersPolicy${this.node.addr}`, {
-        responseHeadersPolicyName: `ImageResponsePolicy${this.node.addr}`,
-        corsBehavior: {
-          accessControlAllowCredentials: false,
-          accessControlAllowHeaders: ['*'],
-          accessControlAllowMethods: ['GET'],
-          accessControlAllowOrigins: ['*'],
-          accessControlMaxAge: Duration.seconds(600),
-          originOverride: false,
-        },
-        // recognizing image requests that were processed by this solution
-        customHeadersBehavior: {
-          customHeaders: [
-            { header: 'x-aws-image-optimization', value: 'v1.0', override: true },
-            { header: 'vary', value: 'accept', override: true },
-          ],
-        }
-      });
-      imageDeliveryCacheBehaviorConfig.responseHeadersPolicy = imageResponseHeadersPolicy;
-    }
     // Video delivery: passthrough from S3 with caching + CORS, no Lambda/Sharp processing
-    var videoDeliveryCacheBehaviorConfig: any = {
+    const videoDeliveryCacheBehaviorConfig: cloudfront.BehaviorOptions = {
       origin: new origins.S3Origin(originalImageBucket, {
         originShieldRegion: CLOUDFRONT_ORIGIN_SHIELD_REGION,
       }),
@@ -255,34 +260,26 @@ export class ImageOptimizationStack extends Stack {
         maxTtl: Duration.days(365),
         minTtl: Duration.seconds(0),
       }),
+      responseHeadersPolicy: videoResponseHeadersPolicy,
     };
-
-    if (CLOUDFRONT_CORS_ENABLED === 'true') {
-      const videoResponseHeadersPolicy = new cloudfront.ResponseHeadersPolicy(this, `VideoResponsePolicy${this.node.addr}`, {
-        responseHeadersPolicyName: `VideoResponsePolicy${this.node.addr}`,
-        corsBehavior: {
-          accessControlAllowCredentials: false,
-          accessControlAllowHeaders: ['*'],
-          accessControlAllowMethods: ['GET'],
-          accessControlAllowOrigins: ['*'],
-          accessControlMaxAge: Duration.seconds(600),
-          originOverride: false,
-        },
-      });
-      videoDeliveryCacheBehaviorConfig.responseHeadersPolicy = videoResponseHeadersPolicy;
-    }
 
     const imageDelivery = new cloudfront.Distribution(this, 'imageDeliveryDistribution', {
       comment: 'image optimization - image delivery',
       defaultBehavior: {
         origin: new origins.S3Origin(originalImageBucket)
       },
+      // CloudFront path patterns are case-sensitive; list both cases for each extension
       additionalBehaviors: {
         '*.jpg': imageDeliveryCacheBehaviorConfig,
+        '*.JPG': imageDeliveryCacheBehaviorConfig,
         '*.jpeg': imageDeliveryCacheBehaviorConfig,
+        '*.JPEG': imageDeliveryCacheBehaviorConfig,
         '*.png': imageDeliveryCacheBehaviorConfig,
+        '*.PNG': imageDeliveryCacheBehaviorConfig,
         '*.gif': imageDeliveryCacheBehaviorConfig,
+        '*.GIF': imageDeliveryCacheBehaviorConfig,
         '*.mp4': videoDeliveryCacheBehaviorConfig,
+        '*.MP4': videoDeliveryCacheBehaviorConfig,
       },
     });
 
