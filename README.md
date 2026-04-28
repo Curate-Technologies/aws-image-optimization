@@ -45,6 +45,67 @@ The stack can be deployed with the following parameters.
 * **DEPLOY_SAMPLE_WEBSITE** set this paramter to true if you want the stack to include another CloudFront distribution pointing to an S3 bucket, that you can use for static website hosting. This option is used in the initial solution [post](https://aws.amazon.com/blogs/networking-and-content-delivery/image-optimization-using-amazon-cloudfront-and-aws-lambda/)
 
 
+## Diffing and deploying to production (Curate)
+
+Production deploys must be parameterized with both the right AWS profile and the existing prod bucket name. **Both flags are required** — without `--profile`, the CLI hits the wrong AWS account; without `-c S3_IMAGE_BUCKET_NAME`, the stack falls through to creating a sample bucket instead of using `divvy-dev2`, and the synthesized template will not match production.
+
+### 1. Confirm the active account
+
+```bash
+aws sts get-caller-identity --profile grant-iam
+```
+
+The output's `Account` should be the production account.
+
+### 2. Preview changes with `cdk diff`
+
+Always run a diff before deploying:
+
+```bash
+npx cdk diff ImgTransformationStack \
+  --profile grant-iam \
+  -c S3_IMAGE_BUCKET_NAME=divvy-dev2
+```
+
+What to look for:
+- The bucket referenced in the diff should be `divvy-dev2`. If you see `s3-sample-original-image-bucket`, the `-c` flag is missing or wrong — re-run.
+- All changes should be additive (`[+]`, `[~]`). Pause and review carefully if any resource shows `Replacement: True`, since that means an existing resource will be torn down and recreated.
+- `divvy-dev2` is an *imported* bucket, so CDK will not modify its bucket policy. If a change adds a new CloudFront origin / OAI against `divvy-dev2`, verify the bucket policy already grants the access the new origin needs (today the bucket policy is open for `s3:GetObject`, so this is not currently a concern).
+
+### 3. Deploy
+
+```bash
+npx cdk deploy ImgTransformationStack \
+  --profile grant-iam \
+  -c S3_IMAGE_BUCKET_NAME=divvy-dev2
+```
+
+CloudFormation typically completes in 1–2 minutes. The CDK output prints the CDN domain as `ImgTransformationStack.ImageDeliveryDomain`.
+
+### 4. Wait for CloudFront propagation
+
+CloudFormation reports `UPDATE_COMPLETE` as soon as the distribution config is accepted, but **edge propagation continues for another 10–30 minutes**. Watch for `Status: Deployed`:
+
+```bash
+aws cloudfront list-distributions --profile grant-iam \
+  --query "DistributionList.Items[?Comment=='image optimization - image delivery'].{Status:Status,LastMod:LastModifiedTime}" \
+  --output table
+```
+
+### Rollback
+
+If something goes wrong, revert the offending commits and re-deploy with the same flags:
+
+```bash
+git revert <commit-sha>
+npx cdk deploy ImgTransformationStack \
+  --profile grant-iam \
+  -c S3_IMAGE_BUCKET_NAME=divvy-dev2
+```
+
+The revert deploy goes through the same 10–30 min CloudFront propagation as a forward deploy.
+
+
 ## Clean up resources
 
 To remove cloud resources created for this solution, just execute the following command:
