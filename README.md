@@ -145,7 +145,7 @@ The deploy outputs `FrontendAssetStack.FrontendAssetBucket`, `FrontendAssetStack
 ### Optional context overrides
 
 * **FE_ASSET_BUCKET_NAME** — override the default `curate-frontend-assets-${ACCOUNT_ID}` bucket name. Use only if you need a non-default bucket (e.g. for a staging deploy in the same account).
-* **FE_ASSET_LIFECYCLE_DAYS** — override how long old chunks are retained before lifecycle expiration. Default `365`. Lower values save storage cost but risk breaking dynamic imports in tabs that have been open longer than the window.
+* **FE_ASSET_LIFECYCLE_DAYS** — override how long old chunks are retained before lifecycle expiration (default is set in `lib/frontend-asset-stack.ts`). Lower values save storage cost but risk breaking dynamic imports in tabs that have been open longer than the window.
 
 ### Invalidating the cache
 

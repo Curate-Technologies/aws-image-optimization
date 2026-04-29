@@ -14,6 +14,7 @@ import {
   aws_s3 as s3,
   aws_cloudfront as cloudfront,
   aws_cloudfront_origins as origins,
+  aws_iam as iam,
 } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 
@@ -57,6 +58,22 @@ export class FrontendAssetStack extends Stack {
         },
       ],
     });
+
+    // Grant the existing Heroku-side IAM user (BackendAccessKey, behind
+    // AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY) PutObject under assets/. This
+    // lets the heroku-postbuild upload script use the SDK's default
+    // credential chain — no separate FE_AWS_* env vars needed.
+    feAssetBucket.addToResourcePolicy(
+      new iam.PolicyStatement({
+        sid: 'AllowBackendAccessKeyUploadFrontendChunks',
+        effect: iam.Effect.ALLOW,
+        principals: [
+          new iam.ArnPrincipal(`arn:aws:iam::${this.account}:user/BackendAccessKey`),
+        ],
+        actions: ['s3:PutObject'],
+        resources: [feAssetBucket.arnForObjects('assets/*')],
+      })
+    );
 
     // The page is served from a different origin than the CDN, so module
     // imports and font fetches go through CORS. The S3 bucket has no CORS
