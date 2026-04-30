@@ -47,7 +47,16 @@ The stack can be deployed with the following parameters.
 
 ## Diffing and deploying to production (Curate)
 
-Production deploys must be parameterized with both the right AWS profile and the existing prod bucket name. **Both flags are required** — without `--profile`, the CLI hits the wrong AWS account; without `-c S3_IMAGE_BUCKET_NAME`, the stack falls through to creating a sample bucket instead of using `divvy-dev2`, and the synthesized template will not match production.
+This repo defines two stacks, each pinned to a different AWS account in `bin/image-optimization.ts`:
+
+| Stack | Account | Profile (local convention) |
+| --- | --- | --- |
+| `ImgTransformationStack` | `516314153244` | `grant-iam` |
+| `FrontendAssetStack` | `230194004232` | `curate-admin` |
+
+Because each stack pins `env.account`, `cdk` will refuse to deploy if the active profile points at the wrong account — so a `--profile` mismatch fails fast instead of silently deploying to the wrong place.
+
+For `ImgTransformationStack`, the `S3_IMAGE_BUCKET_NAME` context flag is also required — without it, the stack falls through to creating a sample bucket instead of using `divvy-dev2`.
 
 ### 1. Confirm the active account
 
@@ -104,6 +113,50 @@ npx cdk deploy ImgTransformationStack \
 ```
 
 The revert deploy goes through the same 10–30 min CloudFront propagation as a forward deploy.
+
+
+## Deploying FrontendAssetStack (Curate frontend asset CDN)
+
+`FrontendAssetStack` lives in the `curate-admin` account (`230194004232`) and creates the S3 bucket + CloudFront distribution serving Vite-built JS/CSS/font/image chunks for the Curate web app. It has no required context flags — defaults match prod usage. Always specify the stack name explicitly so the CLI doesn't try to deploy both stacks at once.
+
+### One-time: bootstrap the account
+
+If this is the first CDK deploy ever made into the `curate-admin` account, bootstrap it once:
+
+```bash
+aws sts get-caller-identity --profile curate-admin   # confirm Account = 230194004232
+npx cdk bootstrap aws://230194004232/us-west-1 --profile curate-admin
+```
+
+That creates a `CDKToolkit` CloudFormation stack (S3 staging bucket, IAM roles) used by all future CDK deploys to that account/region.
+
+### Diff and deploy
+
+```bash
+# Diff
+npx cdk diff FrontendAssetStack --profile curate-admin
+
+# Deploy
+npx cdk deploy FrontendAssetStack --profile curate-admin
+```
+
+The deploy outputs `FrontendAssetStack.FrontendAssetBucket`, `FrontendAssetStack.FrontendAssetDistributionDomain`, and `FrontendAssetStack.FrontendAssetDistributionId`. After the first deploy, set those values on the Heroku app (`FE_ASSET_BUCKET=…`, `ASSET_BASE_URL=https://…cloudfront.net/`) so the build-time upload script and Vite know where to publish + reference chunks.
+
+### Optional context overrides
+
+* **FE_ASSET_BUCKET_NAME** — override the default `curate-frontend-assets-${ACCOUNT_ID}` bucket name. Use only if you need a non-default bucket (e.g. for a staging deploy in the same account).
+* **FE_ASSET_LIFECYCLE_DAYS** — override how long old chunks are retained before lifecycle expiration (default is set in `lib/frontend-asset-stack.ts`). Lower values save storage cost but risk breaking dynamic imports in tabs that have been open longer than the window.
+
+### Invalidating the cache
+
+Hashed filenames mean every chunk content change ships at a new URL, so old URLs simply stop being referenced — invalidations are rarely needed. If you do need to force-evict an object:
+
+```bash
+aws cloudfront create-invalidation \
+  --profile curate-admin \
+  --distribution-id <FrontendAssetDistributionId> \
+  --paths '/assets/*'
+```
 
 
 ## Clean up resources
